@@ -1,0 +1,19 @@
+[project]
+name = "chatbot-agent"
+version = "2.0.0"
+description = "WhatsApp AI agent template (LangGraph + RAG + Memory + WAHA)"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

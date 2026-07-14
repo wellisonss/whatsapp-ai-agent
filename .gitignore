@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+tmp/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Runtime data volumes (NÃO versionar). data/knowledge/ é mantido de propósito.
+data/qdrant/
+data/postgres/
+data/redis/
+data/waha-sessions/
+*.sqlite3
