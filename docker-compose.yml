@@ -1,0 +1,128 @@
+name: chatbot
+
+services:
+  # =========================================================================
+  # API: recebe webhooks do WAHA, enfileira em Redis, expõe healthchecks.
+  # =========================================================================
+  api:
+    build: .
+    container_name: chatbot-api
+    command: ["python", "-m", "uvicorn", "chatbot.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "3337:8000"
+    env_file: [.env]
+    volumes:
+      - ./data/knowledge:/app/data/knowledge:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      qdrant:   { condition: service_started }
+    restart: unless-stopped
+    networks: [chatbot-net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # Worker: consome o stream do Redis (com debounce + dedup) e roda o agente.
+  # =========================================================================
+  worker:
+    build: .
+    container_name: chatbot-worker
+    command: ["python", "-m", "chatbot.workers.message_worker"]
+    env_file: [.env]
+    volumes:
+      - ./data/knowledge:/app/data/knowledge:ro
+    depends_on:
+      api:      { condition: service_started }
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      qdrant:   { condition: service_started }
+    restart: unless-stopped
+    networks: [chatbot-net]
+
+  # =========================================================================
+  # Postgres com pgvector (sessões/checkpointer LangGraph + memória de longo prazo)
+  # =========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: chatbot-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chatbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatbot}
+      POSTGRES_DB: ${POSTGRES_DB:-chatbot}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks: [chatbot-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chatbot} -d ${POSTGRES_DB:-chatbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # Redis: fila de mensagens (Streams) + dedup + debounce.
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: chatbot-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+    networks: [chatbot-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # =========================================================================
+  # Qdrant: vector store com hybrid search (BM25 sparse + dense).
+  # =========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: chatbot-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
+    networks: [chatbot-net]
+
+  # =========================================================================
+  # WAHA: gateway WhatsApp (https://waha.devlike.pro).
+  # =========================================================================
+  waha:
+    image: devlikeapro/waha
+    pull_policy: always
+    container_name: waha
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    env_file: [.env]
+    environment:
+      WAHA_SECRET: ${WAHA_API_KEY}
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      WAHA_SESSIONS_AUTO_START: default
+      WAHA_RESTORE_SESSIONS: "true"
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_PRINT_QR: "false"
+      WAHA_BASE_URL: http://localhost:3002
+    volumes:
+      - ./data/waha-sessions:/app/.sessions
+    networks: [chatbot-net]
+
+networks:
+  chatbot-net:
+    driver: bridge
